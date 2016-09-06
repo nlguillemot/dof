@@ -12,11 +12,70 @@
 #include <cstdio>
 #include <memory>
 
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+
 class Renderer : public IRenderer
 {
 public:
     const int kSampleCount = 4;
     const int kMaxTextureCount = 32;
+
+    struct GPUTimestamps
+    {
+        enum Enum
+        {
+            RenderSceneStart,
+            RenderSceneEnd,
+            MultisampleResolveStart,
+            MultisampleResolveEnd,
+            ReadbackBackbufferStart,
+            ReadbackBackbufferEnd,
+            ComputeSATStart,
+            ComputeSATEnd,
+            SATUploadStart,
+            SATUploadEnd,
+            DOFBlurStart,
+            DOFBlurEnd,
+            RenderGUIStart,
+            RenderGUIEnd,
+            BlitToWindowStart,
+            BlitToWindowEnd,
+            Count
+        };
+
+        static constexpr const char* Names[Count / 2] = {
+            "RenderScene",
+            "MultisampleResolve",
+            "ReadbackBackbuffer",
+            "ComputeSAT",
+            "SATUpload",
+            "DOfBlur",
+            "RenderGUI",
+            "BlitToWindow"
+        };
+    };
+
+    struct CPUTimestamps
+    {
+        enum Enum
+        {
+            ReadbackBackbufferStart,
+            ReadbackBackbufferEnd,
+            ComputeSATStart,
+            ComputeSATEnd,
+            SATUploadStart,
+            SATUploadEnd,
+            Count
+        };
+
+        static constexpr const char* Names[Count / 2] = {
+            "ReadbackBackbuffer",
+            "ComputeSAT",
+            "SATUpload"
+        };
+    };
 
     Scene* mScene;
 
@@ -42,12 +101,17 @@ public:
     int mWindowHeight;
 
     bool mUseCPUForSAT;
+    glm::u8vec4* mCPUBackbufferReadback;
     glm::uvec4* mCPUSummedAreaTable;
     GLuint* mSummedAreaTableSP;
     GLuint mSummedAreaTableTO;
 
     GLuint* mDepthOfFieldSP;
     float mFocusDepth;
+
+    GLuint mGPUTimestampQueries[GPUTimestamps::Count];
+    GLuint64 mGPUTimestampQueryResults[GPUTimestamps::Count];
+    LARGE_INTEGER mCPUTimestampQueryResults[CPUTimestamps::Count];
 
     void Init(Scene* scene) override
     {
@@ -65,6 +129,8 @@ public:
         glBindVertexArray(0);
 
         mFocusDepth = 5.0f;
+
+        glGenQueries(GPUTimestamps::Count, &mGPUTimestampQueries[0]);
     }
 
     void Resize(int width, int height) override
@@ -133,6 +199,9 @@ public:
 
         // Init summed area table
         {
+            delete[] mCPUBackbufferReadback;
+            mCPUBackbufferReadback = new glm::u8vec4[mBackbufferWidth * mBackbufferHeight];
+
             delete[] mCPUSummedAreaTable;
             mCPUSummedAreaTable = new glm::uvec4[mBackbufferWidth * mBackbufferHeight];
 
@@ -152,6 +221,56 @@ public:
             ImGui::SliderFloat("Focus Depth", &mFocusDepth, 0.0f, 10.0f);
         }
         ImGui::End();
+
+        // Readback last frame's timestamps and display them
+        if (ImGui::Begin("Renderer Profiling"))
+        {
+            ImGui::Text("GPU time");
+            for (int i = 0; i < GPUTimestamps::Count; i++)
+            {
+                glGetQueryObjectui64v(mGPUTimestampQueries[i], GL_QUERY_RESULT, &mGPUTimestampQueryResults[i]);
+            }
+            
+            for (int i = 0; i < GPUTimestamps::Count / 2; i++)
+            {
+                if (!mUseCPUForSAT)
+                {
+                    if (i * 2 == GPUTimestamps::ReadbackBackbufferStart ||
+                        i * 2 == GPUTimestamps::SATUploadStart)
+                    {
+                        continue;
+                    }
+                }
+
+                uint64_t ns = mGPUTimestampQueryResults[i * 2 + 1] - mGPUTimestampQueryResults[i * 2 + 0];
+                uint64_t ms = ns / 1000000;
+                ImGui::Text("%s: %d.%d milliseconds", GPUTimestamps::Names[i], ms, ns / 1000 - ms * 1000);
+            }
+
+            ImGui::Text("\nCPU time");
+            
+            LARGE_INTEGER freq;
+            QueryPerformanceFrequency(&freq);
+
+            for (int i = 0; i < CPUTimestamps::Count / 2; i++)
+            {
+                if (!mUseCPUForSAT)
+                {
+                    if (i * 2 == CPUTimestamps::ReadbackBackbufferStart ||
+                        i * 2 == CPUTimestamps::ComputeSATStart ||
+                        i * 2 == CPUTimestamps::SATUploadStart)
+                    {
+                        continue;
+                    }
+                }
+
+                uint64_t ticks = mCPUTimestampQueryResults[i * 2 + 1].QuadPart - mCPUTimestampQueryResults[i * 2 + 0].QuadPart;
+                uint64_t us = ticks * 1000000 / freq.QuadPart;
+                uint64_t ms = us / 1000;
+                ImGui::Text("%s: %d.%d milliseconds", CPUTimestamps::Names[i], ms, us - ms * 1000);
+            }
+        }
+        ImGui::End();
     }
 
     void Paint() override
@@ -162,6 +281,7 @@ public:
         mShaders.UpdatePrograms();
 
         // Render scene
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::RenderSceneStart], GL_TIMESTAMP);
         if (*mSceneSP)
         {
             glBindFramebuffer(GL_FRAMEBUFFER, mBackbufferFBOMS);
@@ -261,8 +381,10 @@ public:
 
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::RenderSceneEnd], GL_TIMESTAMP);
 
         // resolve multisampled backbuffer to singlesampled backbuffer
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::MultisampleResolveStart], GL_TIMESTAMP);
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOMS);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mBackbufferFBOSS);
@@ -272,17 +394,26 @@ public:
                 GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::MultisampleResolveEnd], GL_TIMESTAMP);
 
         // Compute SAT for the rendered image
         if (mUseCPUForSAT)
         {
             // Dumb CPU SAT. Mainly used as a reference.
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOSS);
-            std::vector<glm::u8vec4> pixels(mBackbufferWidth * mBackbufferHeight);
-            glReadPixels(0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, &pixels[0]);
-            std::copy(begin(pixels), end(pixels), mCPUSummedAreaTable);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            
+            // Readback backbuffer to SAT-ify it
+            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ReadbackBackbufferStart]);
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ReadbackBackbufferStart], GL_TIMESTAMP);
+            {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOSS);
+                glReadPixels(0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, &mCPUBackbufferReadback[0]);
+                std::copy(mCPUBackbufferReadback, mCPUBackbufferReadback + mBackbufferWidth*mBackbufferHeight, mCPUSummedAreaTable);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            }
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ReadbackBackbufferEnd], GL_TIMESTAMP);
+            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ReadbackBackbufferEnd]);
 
+            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ComputeSATStart]);
             // sum the rows
             for (int row = 0; row < mBackbufferHeight; row++)
             {
@@ -300,31 +431,42 @@ public:
                     mCPUSummedAreaTable[row * mBackbufferWidth + col] += mCPUSummedAreaTable[(row-1) * mBackbufferWidth + col];
                 }
             }
+            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ComputeSATEnd]);
 
-            glBindTexture(GL_TEXTURE_2D, mSummedAreaTableTO);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA_INTEGER, GL_UNSIGNED_INT, &mCPUSummedAreaTable[0]);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            // Upload SAT back to GPU
+            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::SATUploadStart]);
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::SATUploadStart], GL_TIMESTAMP);
+            {
+                glBindTexture(GL_TEXTURE_2D, mSummedAreaTableTO);
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA_INTEGER, GL_UNSIGNED_INT, &mCPUSummedAreaTable[0]);
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::SATUploadEnd], GL_TIMESTAMP);
+            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::SATUploadEnd]);
         }
         else
         {
-            // GPU SAT
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ComputeSATStart], GL_TIMESTAMP);
             if (*mSummedAreaTableSP)
             {
+                // GPU SAT
                 glUseProgram(*mSummedAreaTableSP);
                 glBindImageTexture(SAT_INPUT_IMAGE_BINDING, mBackbufferColorTOSS, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8UI);
                 glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableTO, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
-            
+
                 int nWorkGroupsX = (mBackbufferWidth + SAT_WORKGROUP_SIZE_X - 1) / SAT_WORKGROUP_SIZE_X;
                 int nWorkGroupsY = (mBackbufferHeight + SAT_WORKGROUP_SIZE_Y - 1) / SAT_WORKGROUP_SIZE_Y;
                 glDispatchCompute(nWorkGroupsX, nWorkGroupsY, 1);
-            
+
                 glBindImageTextures(SAT_INPUT_IMAGE_BINDING, 1, NULL);
                 glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
                 glUseProgram(0);
             }
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ComputeSATEnd], GL_TIMESTAMP);
         }
 
         // Apply DoF-blur to scene
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::DOFBlurStart], GL_TIMESTAMP);
         if (*mDepthOfFieldSP)
         {
             glBindFramebuffer(GL_FRAMEBUFFER, mBackbufferFBOSS);
@@ -348,15 +490,19 @@ public:
             glUseProgram(0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::DOFBlurEnd], GL_TIMESTAMP);
 
         // Render GUI
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::RenderGUIStart], GL_TIMESTAMP);
         {
             glBindFramebuffer(GL_FRAMEBUFFER, mBackbufferFBOSS);
             ImGui::Render();
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::RenderGUIEnd], GL_TIMESTAMP);
 
         // Blit to window's framebuffer
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::BlitToWindowStart], GL_TIMESTAMP);
         {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOSS);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // default FBO
@@ -369,6 +515,7 @@ public:
 
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::BlitToWindowEnd], GL_TIMESTAMP);
     }
 
     int GetRenderWidth() const override
