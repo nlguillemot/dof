@@ -147,6 +147,13 @@ public:
         mLastMouseX = mouseX;
         mLastMouseY = mouseY;
     }
+
+    void* operator new(size_t sz)
+    {
+        void* mem = ::operator new(sz);
+        memset(mem, 0, sz);
+        return mem;
+    }
 };
 
 ISimulation* NewSimulation()

@@ -31,7 +31,7 @@ void main()
     depth = ZNear / depth;
 
     sw = sh = int(abs(depth - Focus));
-    
+
     // each tap is offset from the box filter differently
     ivec2 tap_offsets[4];
     tap_offsets[UR] = ivec2(0, 0);
