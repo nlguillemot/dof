@@ -10,6 +10,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cstdio>
+#include <memory>
 
 class Renderer : public IRenderer
 {
@@ -40,12 +41,13 @@ public:
     int mWindowWidth;
     int mWindowHeight;
 
+    bool mUseCPUForSAT;
+    glm::uvec4* mCPUSummedAreaTable;
     GLuint* mSummedAreaTableSP;
     GLuint mSummedAreaTableTO;
-    int mSummedAreaTableWidth;
-    int mSummedAreaTableHeight;
 
     GLuint* mDepthOfFieldSP;
+    float mFocusDepth;
 
     void Init(Scene* scene) override
     {
@@ -61,6 +63,8 @@ public:
         glGenVertexArrays(1, &mNullVAO);
         glBindVertexArray(mNullVAO);
         glBindVertexArray(0);
+
+        mFocusDepth = 5.0f;
     }
 
     void Resize(int width, int height) override
@@ -129,20 +133,31 @@ public:
 
         // Init summed area table
         {
-            // width/height padded up to SAT workgroup size
-            mSummedAreaTableWidth = (mBackbufferWidth + SAT_WORKGROUP_SIZE_X - 1) & ~(SAT_WORKGROUP_SIZE_X - 1);
-            mSummedAreaTableHeight = (mBackbufferHeight + SAT_WORKGROUP_SIZE_Y - 1) & ~(SAT_WORKGROUP_SIZE_Y - 1);
+            delete[] mCPUSummedAreaTable;
+            mCPUSummedAreaTable = new glm::uvec4[mBackbufferWidth * mBackbufferHeight];
 
             glDeleteTextures(1, &mSummedAreaTableTO);
             glGenTextures(1, &mSummedAreaTableTO);
             glBindTexture(GL_TEXTURE_2D, mSummedAreaTableTO);
-            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, mSummedAreaTableWidth, mSummedAreaTableHeight);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, mBackbufferWidth, mBackbufferHeight);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
     }
 
+    void UpdateGUI()
+    {
+        if (ImGui::Begin("Renderer"))
+        {
+            ImGui::Checkbox("CPU SAT", &mUseCPUForSAT);
+            ImGui::SliderFloat("Focus Depth", &mFocusDepth, 0.0f, 10.0f);
+        }
+        ImGui::End();
+    }
+
     void Paint() override
     {
+        UpdateGUI();
+
         // Reload any programs
         mShaders.UpdatePrograms();
 
@@ -259,17 +274,54 @@ public:
         }
 
         // Compute SAT for the rendered image
-        if (*mSummedAreaTableSP)
+        if (mUseCPUForSAT)
         {
-            glUseProgram(*mSummedAreaTableSP);
-            glBindImageTexture(SAT_INPUT_IMAGE_BINDING, mBackbufferColorTOSS, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8UI);
-            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableTO, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
+            // Dumb CPU SAT. Mainly used as a reference.
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOSS);
+            std::vector<glm::u8vec4> pixels(mBackbufferWidth * mBackbufferHeight);
+            glReadPixels(0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, &pixels[0]);
+            std::copy(begin(pixels), end(pixels), mCPUSummedAreaTable);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+            // sum the rows
+            for (int row = 0; row < mBackbufferHeight; row++)
+            {
+                for (int col = 1; col < mBackbufferWidth; col++)
+                {
+                    mCPUSummedAreaTable[row * mBackbufferWidth + col] += mCPUSummedAreaTable[row * mBackbufferWidth + (col - 1)];
+                }
+            }
+
+            // sum the columns (gross memory access...)
+            for (int col = 0; col < mBackbufferWidth; col++)
+            {
+                for (int row = 1; row < mBackbufferHeight; row++)
+                {
+                    mCPUSummedAreaTable[row * mBackbufferWidth + col] += mCPUSummedAreaTable[(row-1) * mBackbufferWidth + col];
+                }
+            }
+
+            glBindTexture(GL_TEXTURE_2D, mSummedAreaTableTO);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA_INTEGER, GL_UNSIGNED_INT, &mCPUSummedAreaTable[0]);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
+        else
+        {
+            // GPU SAT
+            if (*mSummedAreaTableSP)
+            {
+                glUseProgram(*mSummedAreaTableSP);
+                glBindImageTexture(SAT_INPUT_IMAGE_BINDING, mBackbufferColorTOSS, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8UI);
+                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableTO, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32UI);
             
-            glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mSummedAreaTableHeight / SAT_WORKGROUP_SIZE_Y, 1);
+                int nWorkGroupsX = (mBackbufferWidth + SAT_WORKGROUP_SIZE_X - 1) / SAT_WORKGROUP_SIZE_X;
+                int nWorkGroupsY = (mBackbufferHeight + SAT_WORKGROUP_SIZE_Y - 1) / SAT_WORKGROUP_SIZE_Y;
+                glDispatchCompute(nWorkGroupsX, nWorkGroupsY, 1);
             
-            glBindImageTextures(SAT_INPUT_IMAGE_BINDING, 1, NULL);
-            glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-            glUseProgram(0);
+                glBindImageTextures(SAT_INPUT_IMAGE_BINDING, 1, NULL);
+                glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
+                glUseProgram(0);
+            }
         }
 
         // Apply DoF-blur to scene
@@ -278,13 +330,20 @@ public:
             glBindFramebuffer(GL_FRAMEBUFFER, mBackbufferFBOSS);
             glUseProgram(*mDepthOfFieldSP);
             glBindVertexArray(mNullVAO);
-            glBindTextures(DOF_INPUT_SAT_TEXTURE_BINDING, 1, &mSummedAreaTableTO);
+            glBindTextures(DOF_SAT_TEXTURE_BINDING, 1, &mSummedAreaTableTO);
+            glBindTextures(DOF_DEPTH_TEXTURE_BINDING, 1, &mBackbufferDepthTOSS);
             glEnable(GL_FRAMEBUFFER_SRGB);
+
+            Camera& mainCamera = mScene->Cameras[mScene->MainCameraID];
+
+            glUniform1f(DOF_ZNEAR_UNIFORM_LOCATION, mainCamera.ZNear);
+            glUniform1f(DOF_FOCUS_UNIFORM_LOCATION, mFocusDepth);
             
             glDrawArrays(GL_TRIANGLES, 0, 3);
             
             glDisable(GL_FRAMEBUFFER_SRGB);
-            glBindTextures(DOF_INPUT_SAT_TEXTURE_BINDING, 1, NULL);
+            glBindTextures(DOF_SAT_TEXTURE_BINDING, 1, NULL);
+            glBindTextures(DOF_DEPTH_TEXTURE_BINDING, 1, NULL);
             glBindVertexArray(0);
             glUseProgram(0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);

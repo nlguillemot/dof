@@ -51,12 +51,29 @@ public:
         LoadMeshes(*mScene, "assets/teapot/teapot.obj", &loadedMeshIDs);
         for (uint32_t loadedMeshID : loadedMeshIDs)
         {
-            uint32_t newInstanceID;
-            AddInstance(*mScene, loadedMeshID, &newInstanceID);
+            // place a teapot on top of the cube
+            {
+                uint32_t newInstanceID;
+                AddInstance(*mScene, loadedMeshID, &newInstanceID);
+                uint32_t newTransformID = scene->Instances[newInstanceID].TransformID;
+                scene->Transforms[newTransformID].Translation += glm::vec3(0.0f, 2.0f, 0.0f);
+            }
 
-            // place the teapot on top of the cube
-            uint32_t newTransformID = scene->Instances[newInstanceID].TransformID;
-            scene->Transforms[newTransformID].Translation += glm::vec3(0.0f, 2.0f, 0.0f);
+            // place a teapot on the side
+            {
+                uint32_t newInstanceID;
+                AddInstance(*mScene, loadedMeshID, &newInstanceID);
+                uint32_t newTransformID = scene->Instances[newInstanceID].TransformID;
+                scene->Transforms[newTransformID].Translation += glm::vec3(3.0f, 1.0f, 4.0f);
+            }
+
+            // place another teapot on the side
+            {
+                uint32_t newInstanceID;
+                AddInstance(*mScene, loadedMeshID, &newInstanceID);
+                uint32_t newTransformID = scene->Instances[newInstanceID].TransformID;
+                scene->Transforms[newTransformID].Translation += glm::vec3(3.0f, 1.0f, -4.0f);
+            }
         }
 
         loadedMeshIDs.clear();
@@ -122,8 +139,6 @@ public:
 
         mainCamera.Aspect = (float)mRenderer->GetRenderWidth() / mRenderer->GetRenderHeight();
         mainCamera.ZNear = 0.01f;
-
-        ImGui::ShowTestWindow();
 
         mFirstUpdate = false;
 
