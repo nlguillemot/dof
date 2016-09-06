@@ -1,0 +1,118 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClInclude Include="scene.h" />
+    <ClInclude Include="renderer.h" />
+    <ClInclude Include="simulation.h" />
+    <ClInclude Include="imconfig.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui_impl_sdl_gl3.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui_internal.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_rect_pack.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_textedit.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_truetype.h">
+      <Filter>imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="tiny_obj_loader.h">
+      <Filter>loaders</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_image.h">
+      <Filter>loaders</Filter>
+    </ClInclude>
+    <ClInclude Include="opengl.h">
+      <Filter>sdl_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="mysdl_dpi.h">
+      <Filter>sdl_gl</Filter>
+    </ClInclude>
+    <ClInclude Include="shaderset.h">
+      <Filter>loaders</Filter>
+    </ClInclude>
+    <ClInclude Include="packed_freelist.h">
+      <Filter>containers</Filter>
+    </ClInclude>
+    <ClInclude Include="arcball_camera.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="renderer.cpp" />
+    <ClCompile Include="simulation.cpp" />
+    <ClCompile Include="scene.cpp" />
+    <ClCompile Include="imgui.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_demo.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_draw.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_impl_sdl_gl3.cpp">
+      <Filter>imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="stb_image.c">
+      <Filter>loaders</Filter>
+    </ClCompile>
+    <ClCompile Include="tiny_obj_loader.cc">
+      <Filter>loaders</Filter>
+    </ClCompile>
+    <ClCompile Include="opengl.cpp">
+      <Filter>sdl_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="mysdl_dpi.cpp">
+      <Filter>sdl_gl</Filter>
+    </ClCompile>
+    <ClCompile Include="shaderset.cpp">
+      <Filter>loaders</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="preamble.glsl">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="scene.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="scene.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="sat.comp">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="dof.frag">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="blit.vert">
+      <Filter>shaders</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="imgui">
+      <UniqueIdentifier>{230f1571-dcdc-4d7f-af11-dcdb7855b14d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="shaders">
+      <UniqueIdentifier>{5bd3ac4b-e6b8-4116-bb8a-9f6837a6bca8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="loaders">
+      <UniqueIdentifier>{5ce813ff-d862-4bff-92a3-acf0286c3602}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="sdl_gl">
+      <UniqueIdentifier>{ec8e0668-82d1-4a5e-ac65-5572dc3ceca1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="containers">
+      <UniqueIdentifier>{531ac25b-5b0a-4052-b828-86f9ec5c3f2a}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
