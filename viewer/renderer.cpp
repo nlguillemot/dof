@@ -228,20 +228,6 @@ public:
         if (ImGui::Begin("Renderer Profiling") && !mFirstFrame)
         {
             ImGui::Text("GPU time");
-            for (int i = 0; i < GPUTimestamps::Count; i++)
-            {
-                if (!mUseCPUForSAT)
-                {
-                    if ((i & ~1) == GPUTimestamps::ReadbackBackbufferStart ||
-                        (i & ~1) == GPUTimestamps::SATUploadStart)
-                    {
-                        continue;
-                    }
-                }
-
-                glGetQueryObjectui64v(mGPUTimestampQueries[i], GL_QUERY_RESULT, &mGPUTimestampQueryResults[i]);
-            }
-            
             for (int i = 0; i < GPUTimestamps::Count / 2; i++)
             {
                 if (!mUseCPUForSAT)
@@ -252,6 +238,16 @@ public:
                         continue;
                     }
                 }
+                else
+                {
+                    if (i * 2 == GPUTimestamps::ComputeSATStart)
+                    {
+                        continue;
+                    }
+                }
+
+                glGetQueryObjectui64v(mGPUTimestampQueries[i * 2 + 0], GL_QUERY_RESULT, &mGPUTimestampQueryResults[i * 2 + 0]);
+                glGetQueryObjectui64v(mGPUTimestampQueries[i * 2 + 1], GL_QUERY_RESULT, &mGPUTimestampQueryResults[i * 2 + 1]);
 
                 uint64_t ns = mGPUTimestampQueryResults[i * 2 + 1] - mGPUTimestampQueryResults[i * 2 + 0];
                 uint64_t ms = ns / 1000000;
