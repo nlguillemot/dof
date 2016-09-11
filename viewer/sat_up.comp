@@ -1,0 +1,66 @@
+layout(binding = SAT_INPUT_TEXTURE_BINDING) uniform sampler2D img_in;
+layout(binding = SAT_UINT_INPUT_TEXTURE_BINDING) uniform usampler2D uimg_in;
+layout(rgba32ui, binding = SAT_OUTPUT_IMAGE_BINDING) restrict writeonly uniform uimage2D sat1_out;
+layout(rgba32ui, binding = SAT_WGSUMS_IMAGE_BINDING) restrict writeonly uniform uimage2D wgsum_out;
+
+layout(location = SAT_USE_UINT_INPUT_UNIFORM_LOCATION) uniform int UseUintInput;
+layout(location = SAT_WRITE_WGSUMS_UNIFORM_LOCATION) uniform int WriteWGSums;
+
+layout(local_size_x = SAT_WORKGROUP_SIZE_X) in;
+
+shared uvec4 buf[gl_WorkGroupSize.x * 2];
+
+void main()
+{
+    // initialize buffer for up-sweep
+    int buf_in = 0;
+    int buf_out = 1;
+
+    uvec4 src;
+    if (UseUintInput != 0) {
+        src = texelFetch(uimg_in, ivec2(gl_GlobalInvocationID.xy), 0);
+    }
+    else {
+        src = uvec4(texelFetch(img_in, ivec2(gl_GlobalInvocationID.xy), 0) * 255.0);
+    }
+
+    buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x] = src;
+    barrier();
+
+    // perform up-sweep
+    for (uint stride = 2; stride <= gl_WorkGroupSize.x; stride *= 2)
+    {
+        uvec4 new_val;
+
+        if (((gl_LocalInvocationID.x + 1) & (stride-1)) != 0)
+        {
+            // nodes that aren't reduced stay the same
+            new_val = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
+        }
+        else
+        {
+            // read the two elements to reduce
+            uvec4 a = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x - stride / 2];
+            uvec4 b = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
+
+            // reduce!
+            new_val = a + b;
+        }
+
+        buf[buf_out * gl_WorkGroupSize.x + gl_LocalInvocationID.x] = new_val;
+        barrier();
+
+        // swap buffers
+        buf_out = 1 - buf_out;
+        buf_in = 1 - buf_in;
+    }
+
+    if (WriteWGSums != 0)
+    {
+        if (gl_LocalInvocationID.x == SAT_WORKGROUP_SIZE_X - 1)
+        {
+            uvec4 wgsum = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
+            imageStore(wgsum_out, ivec2(gl_GlobalInvocationID.xy) / ivec2(SAT_WORKGROUP_SIZE_X, 1), wgsum);
+        }
+    }
+}

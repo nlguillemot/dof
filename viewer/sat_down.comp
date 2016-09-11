@@ -1,0 +1,63 @@
+layout(rgba32ui, binding = SAT_OUTPUT_IMAGE_BINDING) restrict uniform uimage2D sat_inout;
+layout(rgba32ui, binding = SAT_WGSUMS_IMAGE_BINDING) restrict readonly uniform uimage2D wgsum_in;
+
+layout(location = SAT_READ_WGSUMS_UNIFORM_LOCATION) uniform int ReadWGSums;
+
+layout(local_size_x = SAT_WORKGROUP_SIZE_X) in;
+
+shared uvec4 buf[gl_WorkGroupSize.x * 2];
+
+void main()
+{
+    // initialize buffer for down-sweep
+    int buf_in = 0;
+    int buf_out = 1;
+
+    // perform down-sweep
+    if (gl_LocalInvocationID.x == gl_WorkGroupSize.x - 1) {
+        buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x] = uvec4(0);
+    }
+    else {
+        buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x] = imageLoad(sat_inout, ivec2(gl_GlobalInvocationID.xy));
+    }
+    barrier();
+
+    for (uint stride = gl_WorkGroupSize.x / 2; stride >= 1; stride /= 2)
+    {
+        uvec4 new_val;
+
+        if (((gl_LocalInvocationID.x + 1) & (stride - 1)) != 0)
+        {
+            // nodes that aren't reduced stay the same
+            new_val = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
+        }
+        else if (((gl_LocalInvocationID.x + 1) & (2 * stride - 1)) != 0)
+        {
+            // this invocation is summed
+            uvec4 a = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x - stride];
+            uvec4 b = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
+
+            new_val = a + b;
+        }
+        else
+        {
+            // this invocation is gets the value that was trickled down
+            new_val = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x + stride];
+        }
+
+        buf[buf_out * gl_WorkGroupSize.x + gl_LocalInvocationID.x] = new_val;
+        barrier();
+
+        // swap buffers
+        buf_out = 1 - buf_out;
+        buf_in = 1 - buf_in;
+    }
+
+    // writeback to output
+    uvec4 result = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
+    if (ReadWGSums != 0) {
+        result += imageLoad(wgsum_in, ivec2(gl_GlobalInvocationID.xy));
+    }
+         
+    imageStore(sat_inout, ivec2(gl_GlobalInvocationID.xy), result);
+}

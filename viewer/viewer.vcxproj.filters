@@ -88,13 +88,16 @@
     <None Include="scene.vert">
       <Filter>shaders</Filter>
     </None>
-    <None Include="sat.comp">
-      <Filter>shaders</Filter>
-    </None>
     <None Include="dof.frag">
       <Filter>shaders</Filter>
     </None>
     <None Include="blit.vert">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="sat_down.comp">
+      <Filter>shaders</Filter>
+    </None>
+    <None Include="sat_up.comp">
       <Filter>shaders</Filter>
     </None>
   </ItemGroup>
