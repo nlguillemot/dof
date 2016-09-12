@@ -58,6 +58,6 @@ void main()
     if (AddWGSum != 0) {
         result += imageLoad(wgsum_in, ivec2(gl_GlobalInvocationID.xy / gl_WorkGroupSize.xy));
     }
-         
+
     imageStore(sat_inout, ivec2(gl_GlobalInvocationID.xy), result);
 }

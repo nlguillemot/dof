@@ -115,6 +115,7 @@ public:
     GLuint mSummedColsTO;
     GLuint mSummedColsWGSumsTO;
 
+    bool mEnableDoF;
     GLuint* mDepthOfFieldSP;
     float mFocusDepth;
 
@@ -141,6 +142,7 @@ public:
         glBindVertexArray(mNullVAO);
         glBindVertexArray(0);
 
+        mEnableDoF = true;
         mFocusDepth = 5.0f;
 
         glGenQueries(GPUTimestamps::Count, &mGPUTimestampQueries[0]);
@@ -313,6 +315,7 @@ public:
 
         if (ImGui::Begin("Renderer"))
         {
+            ImGui::Checkbox("Enable DoF", &mEnableDoF);
             ImGui::Checkbox("CPU SAT", &mUseCPUForSAT);
             ImGui::SliderFloat("Focus Depth", &mFocusDepth, 0.0f, 10.0f);
         }
@@ -442,243 +445,257 @@ public:
         }
         glQueryCounter(mGPUTimestampQueries[GPUTimestamps::MultisampleResolveEnd], GL_TIMESTAMP);
 
-        // Compute SAT for the rendered image
-        if (mUseCPUForSAT)
+        if (mEnableDoF)
         {
-            // Dumb CPU SAT. Mainly used as a reference.
-            
-            // Readback backbuffer to SAT-ify it
-            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ReadbackBackbufferStart]);
-            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ReadbackBackbufferStart], GL_TIMESTAMP);
+            // Compute SAT for the rendered image
+            if (mUseCPUForSAT)
             {
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOSS);
-                glReadPixels(0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, &mCPUBackbufferReadback[0]);
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            }
-            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ReadbackBackbufferEnd], GL_TIMESTAMP);
-            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ReadbackBackbufferEnd]);
+                // Dumb CPU SAT. Mainly used as a reference.
 
-            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ComputeSATStart]);
-            // sum the rows
-            for (int row = 0; row < mBackbufferHeight; row++)
-            {
-                for (int col = 1; col < mBackbufferWidth; col++)
+                // Readback backbuffer to SAT-ify it
+                QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ReadbackBackbufferStart]);
+                glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ReadbackBackbufferStart], GL_TIMESTAMP);
                 {
-                    mCPUSummedAreaTable[row * mSummedAreaTableWidth + col] = glm::uvec4(mCPUBackbufferReadback[row * mBackbufferWidth + col]) + mCPUSummedAreaTable[row * mSummedAreaTableWidth + (col - 1)];
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, mBackbufferFBOSS);
+                    glReadPixels(0, 0, mBackbufferWidth, mBackbufferHeight, GL_RGBA, GL_UNSIGNED_BYTE, &mCPUBackbufferReadback[0]);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
                 }
-            }
+                glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ReadbackBackbufferEnd], GL_TIMESTAMP);
+                QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ReadbackBackbufferEnd]);
 
-            // sum the columns (gross memory access...)
-            for (int col = 0; col < mBackbufferWidth; col++)
-            {
-                for (int row = 1; row < mBackbufferHeight; row++)
-                {
-                    mCPUSummedAreaTable[row * mSummedAreaTableWidth + col] += mCPUSummedAreaTable[(row-1) * mSummedAreaTableWidth + col];
-                }
-            }
-            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ComputeSATEnd]);
-
-            // Upload SAT back to GPU
-            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::SATUploadStart]);
-            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::SATUploadStart], GL_TIMESTAMP);
-            {
-                glBindTexture(GL_TEXTURE_2D, *mSummedAreaTableTO);
+                QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ComputeSATStart]);
+                
+                // sum the rows
                 for (int row = 0; row < mBackbufferHeight; row++)
                 {
-                    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, row, mBackbufferWidth, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, &mCPUSummedAreaTable[row * mSummedAreaTableWidth]);
-                }
-                glBindTexture(GL_TEXTURE_2D, 0);
-            }
-            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::SATUploadEnd], GL_TIMESTAMP);
-            QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::SATUploadEnd]);
-        }
-        else
-        {
-            // GPU SAT
-            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ComputeSATStart], GL_TIMESTAMP);
-            if (*mSummedAreaTableUpsweepSP && *mSummedAreaTableDownsweepSP && *mTransposeSummedAreaTableSP)
-            {
-                enum SATPass {
-                    SATPass_Rows,
-                    SATPass_Cols,
-                    SATPass_Count
-                };
+                    glm::uvec4 first = glm::uvec4(mCPUBackbufferReadback[row * mBackbufferWidth + 0]);
+                    first = glm::uvec4(pow(glm::vec4(first) / 255.0f, glm::vec4(2.2f)) * 255.0f);
+                    mCPUSummedAreaTable[row * mSummedAreaTableWidth + 0] = first;
 
-                for (int pass = 0; pass < SATPass_Count; pass++)
+                    for (int col = 1; col < mBackbufferWidth; col++)
+                    {
+                        glm::uvec4 readback = glm::uvec4(mCPUBackbufferReadback[row * mBackbufferWidth + col]);
+                        readback = glm::uvec4(pow(glm::vec4(readback) / 255.0f, glm::vec4(2.2f)) * 255.0f);
+                        mCPUSummedAreaTable[row * mSummedAreaTableWidth + col] = readback + mCPUSummedAreaTable[row * mSummedAreaTableWidth + (col - 1)];
+                    }
+                }
+
+                // sum the columns (gross memory access...)
+                for (int col = 0; col < mBackbufferWidth; col++)
                 {
-                    // Up-sweep
+                    for (int row = 1; row < mBackbufferHeight; row++)
                     {
-                        glUseProgram(*mSummedAreaTableUpsweepSP);
-
-                        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-
-                        if (pass == SATPass_Rows) {
-                            glBindTextures(SAT_INPUT_TEXTURE_BINDING, 1, &mBackbufferColorTOSS);
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                            glUniform1i(SAT_READ_UINT_INPUT_UNIFORM_LOCATION, 0);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedColsTO);
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                            glUniform1i(SAT_READ_UINT_INPUT_UNIFORM_LOCATION, 1);
-                        }
-
-                        if (pass == SATPass_Rows) {
-                            glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glDispatchCompute(mSummedAreaTableHeight / SAT_WORKGROUP_SIZE_X, mBackbufferWidth, 1);
-                        }
-
-                        glBindTextures(SAT_INPUT_TEXTURE_BINDING, 1, NULL);
-                        glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-                        glUseProgram(0);
-                    }
-
-                    // Up-sweep WG sums
-                    {
-                        glUseProgram(*mSummedAreaTableUpsweepSP);
-
-                        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-
-                        if (pass == SATPass_Rows) {
-                            glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedRowsTO);
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsWGSumsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedColsTO);
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsWGSumsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                        }
-
-                        glUniform1i(SAT_READ_UINT_INPUT_UNIFORM_LOCATION, 1);
-
-                        if (pass == SATPass_Rows) {
-                            glDispatchCompute(1, mBackbufferHeight, 1);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glDispatchCompute(1, mBackbufferWidth, 1);
-                        }
-
-                        glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, NULL);
-                        glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-                        glUseProgram(0);
-                    }
-
-                    // Down-sweep WG sums
-                    {
-                        glUseProgram(*mSummedAreaTableDownsweepSP);
-
-                        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-                        if (pass == SATPass_Rows) {
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsWGSumsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsWGSumsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
-                        }
-
-                        glUniform1i(SAT_ADD_WGSUM_UNIFORM_LOCATION, 0);
-
-                        if (pass == SATPass_Rows) {
-                            glDispatchCompute(1, mBackbufferHeight, 1);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glDispatchCompute(1, mBackbufferWidth, 1);
-                        }
-
-                        glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-                        glUseProgram(0);
-                    }
-
-                    // Down-sweep
-                    {
-                        glUseProgram(*mSummedAreaTableDownsweepSP);
-
-                        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-                        if (pass == SATPass_Rows) {
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
-                            glBindImageTexture(SAT_WGSUMS_IMAGE_BINDING, mSummedRowsWGSumsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
-                            glBindImageTexture(SAT_WGSUMS_IMAGE_BINDING, mSummedColsWGSumsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
-                        }
-
-                        glUniform1i(SAT_ADD_WGSUM_UNIFORM_LOCATION, 1);
-
-                        if (pass == SATPass_Rows) {
-                            glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glDispatchCompute(mSummedAreaTableHeight / SAT_WORKGROUP_SIZE_X, mBackbufferWidth, 1);
-                        }
-
-                        glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-                        glBindImageTextures(SAT_WGSUMS_IMAGE_BINDING, 1, NULL);
-                        glUseProgram(0);
-                    }
-
-                    // Transpose
-                    {
-                        glUseProgram(*mTransposeSummedAreaTableSP);
-
-                        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-                        
-                        if (pass == SATPass_Rows) {
-                            glBindImageTexture(TRANSPOSE_SAT_INPUT_IMAGE_BINDING, mSummedRowsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
-                            glBindImageTexture(TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glBindImageTexture(TRANSPOSE_SAT_INPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
-                            glBindImageTexture(TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING, *mSummedAreaTableTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                        }
-                        
-                        if (pass == SATPass_Rows) {
-                            glDispatchCompute(mSummedAreaTableWidth / TRANSPOSE_SAT_WORKGROUP_SIZE_X, mSummedAreaTableHeight / TRANSPOSE_SAT_WORKGROUP_SIZE_X, 1);
-                        }
-                        else if (pass == SATPass_Cols) {
-                            glDispatchCompute(mSummedAreaTableHeight / TRANSPOSE_SAT_WORKGROUP_SIZE_X, mSummedAreaTableWidth / TRANSPOSE_SAT_WORKGROUP_SIZE_X, 1);
-                        }
-
-                        glBindImageTextures(TRANSPOSE_SAT_INPUT_IMAGE_BINDING, 1, NULL);
-                        glBindImageTextures(TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-                        glUseProgram(0);
+                        mCPUSummedAreaTable[row * mSummedAreaTableWidth + col] += mCPUSummedAreaTable[(row - 1) * mSummedAreaTableWidth + col];
                     }
                 }
+                QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::ComputeSATEnd]);
+
+                // Upload SAT back to GPU
+                QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::SATUploadStart]);
+                glQueryCounter(mGPUTimestampQueries[GPUTimestamps::SATUploadStart], GL_TIMESTAMP);
+                {
+                    glBindTexture(GL_TEXTURE_2D, *mSummedAreaTableTO);
+                    for (int row = 0; row < mBackbufferHeight; row++)
+                    {
+                        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, row, mBackbufferWidth, 1, GL_RGBA_INTEGER, GL_UNSIGNED_INT, &mCPUSummedAreaTable[row * mSummedAreaTableWidth]);
+                    }
+                    glBindTexture(GL_TEXTURE_2D, 0);
+                }
+                glQueryCounter(mGPUTimestampQueries[GPUTimestamps::SATUploadEnd], GL_TIMESTAMP);
+                QueryPerformanceCounter(&mCPUTimestampQueryResults[CPUTimestamps::SATUploadEnd]);
             }
-            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ComputeSATEnd], GL_TIMESTAMP);
-        }
+            else
+            {
+                // GPU SAT
+                glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ComputeSATStart], GL_TIMESTAMP);
+                if (*mSummedAreaTableUpsweepSP && *mSummedAreaTableDownsweepSP && *mTransposeSummedAreaTableSP)
+                {
+                    enum SATPass {
+                        SATPass_Rows,
+                        SATPass_Cols,
+                        SATPass_Count
+                    };
 
-        // Apply DoF-blur to scene
-        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::DOFBlurStart], GL_TIMESTAMP);
-        if (*mDepthOfFieldSP)
-        {
-            // ensure the computed SAT is available to the DoF shader
-            glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+                    for (int pass = 0; pass < SATPass_Count; pass++)
+                    {
+                        // Up-sweep
+                        {
+                            glUseProgram(*mSummedAreaTableUpsweepSP);
 
-            glBindFramebuffer(GL_FRAMEBUFFER, mBackbufferFBOSS);
-            glUseProgram(*mDepthOfFieldSP);
-            glBindVertexArray(mNullVAO);
-            glBindTextures(DOF_SAT_TEXTURE_BINDING, 1, &*mSummedAreaTableTO);
-            glBindTextures(DOF_DEPTH_TEXTURE_BINDING, 1, &mBackbufferDepthTOSS);
-            glEnable(GL_FRAMEBUFFER_SRGB);
+                            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
-            Camera& mainCamera = mScene->Cameras[mScene->MainCameraID];
+                            if (pass == SATPass_Rows) {
+                                glBindTextures(SAT_INPUT_TEXTURE_BINDING, 1, &mBackbufferColorTOSS);
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+                                glUniform1i(SAT_READ_UINT_INPUT_UNIFORM_LOCATION, 0);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedColsTO);
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+                                glUniform1i(SAT_READ_UINT_INPUT_UNIFORM_LOCATION, 1);
+                            }
 
-            glUniform1f(DOF_ZNEAR_UNIFORM_LOCATION, mainCamera.ZNear);
-            glUniform1f(DOF_FOCUS_UNIFORM_LOCATION, mFocusDepth);
+                            glUniform1i(SAT_READ_WGSUM_UNIFORM_LOCATION, 0);
+
+                            if (pass == SATPass_Rows) {
+                                glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glDispatchCompute(mSummedAreaTableHeight / SAT_WORKGROUP_SIZE_X, mBackbufferWidth, 1);
+                            }
+
+                            glBindTextures(SAT_INPUT_TEXTURE_BINDING, 1, NULL);
+                            glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
+                            glUseProgram(0);
+                        }
+
+                        // Up-sweep WG sums
+                        {
+                            glUseProgram(*mSummedAreaTableUpsweepSP);
+
+                            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+                            if (pass == SATPass_Rows) {
+                                glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedRowsTO);
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsWGSumsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedColsTO);
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsWGSumsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+                            }
+
+                            glUniform1i(SAT_READ_UINT_INPUT_UNIFORM_LOCATION, 0);
+                            glUniform1i(SAT_READ_WGSUM_UNIFORM_LOCATION, 1);
+
+                            if (pass == SATPass_Rows) {
+                                glDispatchCompute(1, mBackbufferHeight, 1);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glDispatchCompute(1, mBackbufferWidth, 1);
+                            }
+
+                            glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, NULL);
+                            glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
+                            glUseProgram(0);
+                        }
+
+                        // Down-sweep WG sums
+                        {
+                            glUseProgram(*mSummedAreaTableDownsweepSP);
+
+                            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+                            if (pass == SATPass_Rows) {
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsWGSumsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsWGSumsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
+                            }
+
+                            glUniform1i(SAT_ADD_WGSUM_UNIFORM_LOCATION, 0);
+
+                            if (pass == SATPass_Rows) {
+                                glDispatchCompute(1, mBackbufferHeight, 1);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glDispatchCompute(1, mBackbufferWidth, 1);
+                            }
+
+                            glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
+                            glUseProgram(0);
+                        }
+
+                        // Down-sweep
+                        {
+                            glUseProgram(*mSummedAreaTableDownsweepSP);
+
+                            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+                            if (pass == SATPass_Rows) {
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedRowsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
+                                glBindImageTexture(SAT_WGSUMS_IMAGE_BINDING, mSummedRowsWGSumsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
+                                glBindImageTexture(SAT_WGSUMS_IMAGE_BINDING, mSummedColsWGSumsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
+                            }
+
+                            glUniform1i(SAT_ADD_WGSUM_UNIFORM_LOCATION, 1);
+
+                            if (pass == SATPass_Rows) {
+                                glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glDispatchCompute(mSummedAreaTableHeight / SAT_WORKGROUP_SIZE_X, mBackbufferWidth, 1);
+                            }
+
+                            glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
+                            glBindImageTextures(SAT_WGSUMS_IMAGE_BINDING, 1, NULL);
+                            glUseProgram(0);
+                        }
+
+                        // Transpose
+                        {
+                            glUseProgram(*mTransposeSummedAreaTableSP);
+
+                            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+                            if (pass == SATPass_Rows) {
+                                glBindImageTexture(TRANSPOSE_SAT_INPUT_IMAGE_BINDING, mSummedRowsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
+                                glBindImageTexture(TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glBindImageTexture(TRANSPOSE_SAT_INPUT_IMAGE_BINDING, mSummedColsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
+                                glBindImageTexture(TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING, *mSummedAreaTableTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
+                            }
+
+                            if (pass == SATPass_Rows) {
+                                glDispatchCompute(mSummedAreaTableWidth / TRANSPOSE_SAT_WORKGROUP_SIZE_X, mSummedAreaTableHeight / TRANSPOSE_SAT_WORKGROUP_SIZE_X, 1);
+                            }
+                            else if (pass == SATPass_Cols) {
+                                glDispatchCompute(mSummedAreaTableHeight / TRANSPOSE_SAT_WORKGROUP_SIZE_X, mSummedAreaTableWidth / TRANSPOSE_SAT_WORKGROUP_SIZE_X, 1);
+                            }
+
+                            glBindImageTextures(TRANSPOSE_SAT_INPUT_IMAGE_BINDING, 1, NULL);
+                            glBindImageTextures(TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
+                            glUseProgram(0);
+                        }
+                    }
+                }
+                glQueryCounter(mGPUTimestampQueries[GPUTimestamps::ComputeSATEnd], GL_TIMESTAMP);
+            }
+
+            // Apply DoF-blur to scene
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::DOFBlurStart], GL_TIMESTAMP);
+            if (*mDepthOfFieldSP)
+            {
+                // ensure the computed SAT is available to the DoF shader
+                glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, mBackbufferFBOSS);
+                glUseProgram(*mDepthOfFieldSP);
+                glBindVertexArray(mNullVAO);
+                glBindTextures(DOF_SAT_TEXTURE_BINDING, 1, &*mSummedAreaTableTO);
+                glBindTextures(DOF_DEPTH_TEXTURE_BINDING, 1, &mBackbufferDepthTOSS);
+                glEnable(GL_FRAMEBUFFER_SRGB);
+
+                Camera& mainCamera = mScene->Cameras[mScene->MainCameraID];
+
+                glUniform1f(DOF_ZNEAR_UNIFORM_LOCATION, mainCamera.ZNear);
+                glUniform1f(DOF_FOCUS_UNIFORM_LOCATION, mFocusDepth);
             
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
             
-            glDisable(GL_FRAMEBUFFER_SRGB);
-            glBindTextures(DOF_SAT_TEXTURE_BINDING, 1, NULL);
-            glBindTextures(DOF_DEPTH_TEXTURE_BINDING, 1, NULL);
-            glBindVertexArray(0);
-            glUseProgram(0);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        }
-        glQueryCounter(mGPUTimestampQueries[GPUTimestamps::DOFBlurEnd], GL_TIMESTAMP);
+                glDisable(GL_FRAMEBUFFER_SRGB);
+                glBindTextures(DOF_SAT_TEXTURE_BINDING, 1, NULL);
+                glBindTextures(DOF_DEPTH_TEXTURE_BINDING, 1, NULL);
+                glBindVertexArray(0);
+                glUseProgram(0);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+            glQueryCounter(mGPUTimestampQueries[GPUTimestamps::DOFBlurEnd], GL_TIMESTAMP);
+        
+        } // endif enable DOF
 
         // Render GUI
         glQueryCounter(mGPUTimestampQueries[GPUTimestamps::RenderGUIStart], GL_TIMESTAMP);

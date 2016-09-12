@@ -3,6 +3,7 @@ layout(binding = SAT_UINT_INPUT_TEXTURE_BINDING) uniform usampler2D uimg_in;
 layout(rgba32ui, binding = SAT_OUTPUT_IMAGE_BINDING) restrict writeonly uniform uimage2D sat1_out;
 
 layout(location = SAT_READ_UINT_INPUT_UNIFORM_LOCATION) uniform int ReadUintInput;
+layout(location = SAT_READ_WGSUM_UNIFORM_LOCATION) uniform int ReadWGSum;
 
 layout(local_size_x = SAT_WORKGROUP_SIZE_X) in;
 
@@ -15,12 +16,15 @@ void main()
     int buf_out = 1;
 
     uvec4 src;
-    if (ReadUintInput != 0) {
+    if (ReadWGSum != 0) {
         ivec2 wgsum_i = ivec2((gl_GlobalInvocationID.xy + uvec2(1,0)) * gl_WorkGroupSize.xy) - ivec2(1, 0);
         if (wgsum_i.x >= textureSize(uimg_in, 0).x) {
             return;
         }
         src = texelFetch(uimg_in, wgsum_i, 0);
+    }
+    else if (ReadUintInput != 0) {
+        src = texelFetch(uimg_in, ivec2(gl_GlobalInvocationID.xy), 0);
     }
     else {
         src = uvec4(texelFetch(img_in, ivec2(gl_GlobalInvocationID.xy), 0) * 255.0);
