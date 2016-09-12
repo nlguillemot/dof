@@ -231,7 +231,7 @@ public:
             glDeleteTextures(1, &mSummedAreaTableWGSumsTO);
             glGenTextures(1, &mSummedAreaTableWGSumsTO);
             glBindTexture(GL_TEXTURE_2D, mSummedAreaTableWGSumsTO);
-            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, SAT_WORKGROUP_SIZE_X, SAT_WORKGROUP_SIZE_X);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32UI, mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mSummedAreaTableHeight);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
     }
@@ -489,16 +489,13 @@ public:
                     
                     glBindTextures(SAT_INPUT_TEXTURE_BINDING, 1, &mBackbufferColorTOSS);
                     glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
-                    glBindImageTexture(SAT_WGSUMS_IMAGE_BINDING, mSummedAreaTableWGSumsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
                     
-                    glUniform1i(SAT_USE_UINT_INPUT_UNIFORM_LOCATION, 0);
-                    glUniform1i(SAT_WRITE_WGSUMS_UNIFORM_LOCATION, 1);
+                    glUniform1i(SAT_WGSUMS_PASS_UNIFORM_LOCATION, 0);
 
                     glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
 
                     glBindTextures(SAT_INPUT_TEXTURE_BINDING, 1, NULL);
                     glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
-                    glBindImageTextures(SAT_WGSUMS_IMAGE_BINDING, 1, NULL);
                     glUseProgram(0);
                 }
 
@@ -512,10 +509,9 @@ public:
                     glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, &mSummedAreaTableTO);
                     glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableWGSumsTO, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA32UI);
 
-                    glUniform1i(SAT_USE_UINT_INPUT_UNIFORM_LOCATION, 1);
-                    glUniform1i(SAT_WRITE_WGSUMS_UNIFORM_LOCATION, 0);
+                    glUniform1i(SAT_WGSUMS_PASS_UNIFORM_LOCATION, 1);
 
-                    glDispatchCompute(SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
+                    glDispatchCompute(1, mBackbufferHeight, 1);
 
                     glBindTextures(SAT_UINT_INPUT_TEXTURE_BINDING, 1, NULL);
                     glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
@@ -531,14 +527,14 @@ public:
 
                     glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableWGSumsTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
 
-                    glUniform1i(SAT_READ_WGSUMS_UNIFORM_LOCATION, 0);
+                    glUniform1i(SAT_WGSUMS_PASS_UNIFORM_LOCATION, 1);
 
-                    glDispatchCompute(SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
+                    glDispatchCompute(1, mBackbufferHeight, 1);
 
                     glBindImageTextures(SAT_OUTPUT_IMAGE_BINDING, 1, NULL);
                     glUseProgram(0);
                 }
-             
+
                 // Down-sweep
                 {
                     // make sure SAT images can be accessed
@@ -549,7 +545,7 @@ public:
                     glBindImageTexture(SAT_OUTPUT_IMAGE_BINDING, mSummedAreaTableTO, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RGBA32UI);
                     glBindImageTexture(SAT_WGSUMS_IMAGE_BINDING, mSummedAreaTableWGSumsTO, 0, GL_TRUE, 0, GL_READ_ONLY, GL_RGBA32UI);
 
-                    glUniform1i(SAT_READ_WGSUMS_UNIFORM_LOCATION, 1);
+                    glUniform1i(SAT_WGSUMS_PASS_UNIFORM_LOCATION, 0);
 
                     glDispatchCompute(mSummedAreaTableWidth / SAT_WORKGROUP_SIZE_X, mBackbufferHeight, 1);
 

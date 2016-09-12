@@ -79,4 +79,5 @@ void main()
     vec4 sat_box = vec4(sat[UR] - sat[UL] - sat[LR] + sat[LL])  / float(boxsz);
 
     FragColor = vec4(sat_box) / 255.0;
+    //FragColor = vec4(texelFetch(SAT, ivec2(gl_FragCoord.xy), 0)) / 255000.0;
 }
