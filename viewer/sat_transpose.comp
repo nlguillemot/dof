@@ -1,0 +1,12 @@
+layout(rgba32ui, binding = TRANSPOSE_SAT_INPUT_IMAGE_BINDING) restrict readonly uniform uimage2D img_in;
+layout(rgba32ui, binding = TRANSPOSE_SAT_OUTPUT_IMAGE_BINDING) restrict writeonly uniform uimage2D img_out;
+
+layout(
+    local_size_x = TRANSPOSE_SAT_WORKGROUP_SIZE_X,
+    local_size_y = TRANSPOSE_SAT_WORKGROUP_SIZE_X) in;
+
+void main()
+{
+    uvec4 v = imageLoad(img_in, ivec2(gl_GlobalInvocationID.xy));
+    imageStore(img_out, ivec2(gl_GlobalInvocationID.yx), v);
+}

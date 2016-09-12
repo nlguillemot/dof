@@ -114,6 +114,7 @@
   <ItemGroup>
     <None Include="blit.vert" />
     <None Include="dof.frag" />
+    <None Include="sat_transpose.comp" />
     <None Include="sat_up.comp" />
     <None Include="preamble.glsl" />
     <None Include="sat_down.comp" />

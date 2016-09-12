@@ -100,6 +100,9 @@
     <None Include="sat_up.comp">
       <Filter>shaders</Filter>
     </None>
+    <None Include="sat_transpose.comp">
+      <Filter>shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="imgui">

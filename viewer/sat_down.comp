@@ -1,7 +1,7 @@
 layout(rgba32ui, binding = SAT_OUTPUT_IMAGE_BINDING) restrict uniform uimage2D sat_inout;
 layout(rgba32ui, binding = SAT_WGSUMS_IMAGE_BINDING) restrict readonly uniform uimage2D wgsum_in;
 
-layout(location = SAT_WGSUMS_PASS_UNIFORM_LOCATION) uniform int WGSumsPass;
+layout(location = SAT_ADD_WGSUM_UNIFORM_LOCATION) uniform int AddWGSum;
 
 layout(local_size_x = SAT_WORKGROUP_SIZE_X) in;
 
@@ -55,7 +55,7 @@ void main()
 
     // writeback to output
     uvec4 result = buf[buf_in * gl_WorkGroupSize.x + gl_LocalInvocationID.x];
-    if (WGSumsPass == 0) {
+    if (AddWGSum != 0) {
         result += imageLoad(wgsum_in, ivec2(gl_GlobalInvocationID.xy / gl_WorkGroupSize.xy));
     }
          
