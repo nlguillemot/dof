@@ -31,7 +31,7 @@ void OpenGL_Init();
 
 #ifndef GLAPIENTRY
 #ifdef _WIN32
-#define GLAPIENTRY _stdcall
+#define GLAPIENTRY __stdcall
 #else
 #define GLAPIENTRY
 #endif
